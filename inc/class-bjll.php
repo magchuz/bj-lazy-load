@@ -29,10 +29,6 @@ class BJLL {
 
 	function __construct( $options = null ) {
 
-		if ( is_a( $options, 'BJLL_Options' ) ) {
-			self::$_options = $options;
-		}
-
 		add_action( 'wp', array( $this, 'init' ), 99 ); // run this as late as possible
 
 	}
@@ -98,17 +94,9 @@ class BJLL {
 		//$jsver = filemtime( dirname( dirname( __FILE__ ) ) . '/js/bj-lazy-load.js' );
 		//wp_enqueue_script( 'BJLL', plugins_url( 'js/bj-lazy-load.js', dirname( __FILE__ ) ), null, $jsver, true );
 		//$jsver = filemtime( dirname( dirname( __FILE__ ) ) . '/js/bj-lazy-load.v1.min.js' );
-		$jsver = 2;
+		$jsver = false;
 		wp_enqueue_script( 'BJLL', plugins_url( 'js/bj-lazy-load.min.js', dirname( __FILE__ ) ), null, $jsver, true );
 
-		$bjll_options = array();
-		$threshold = intval( self::_get_option('threshold') );
-		if ( 200 != $threshold ) {
-			$bjll_options['threshold'] = $threshold;
-		}
-		if ( count( $bjll_options ) ) {
-			wp_localize_script( 'BJLL', 'BJLL_options', $bjll_options );
-		}
 	}
 
 	/**
@@ -118,29 +106,19 @@ class BJLL {
 
 		if ( ! is_admin() ) {
 
-			if ( 'yes' == self::_get_option('lazy_load_images') ) {
 				add_filter( 'bjll/filter', array( __CLASS__, 'filter_images' ) );
-			}
-
-			if ( 'yes' == self::_get_option('lazy_load_iframes') ) {
-				add_filter( 'bjll/filter', array( __CLASS__, 'filter_iframes' ) );
-			}
-
-			if ( 'yes' == self::_get_option( 'filter_content' ) ) {
+			
 				add_filter( 'the_content', array( __CLASS__, 'filter' ), 200 );
-			}
+			
 
-			if ( 'yes' == self::_get_option( 'filter_widget_text' ) ) {
 				add_filter( 'widget_text', array( __CLASS__, 'filter' ), 200 );
-			}
+			
 
-			if ( 'yes' == self::_get_option( 'filter_post_thumbnails' ) ) {
 				add_filter( 'post_thumbnail_html', array( __CLASS__, 'filter' ), 200 );
-			}
+			
 
-			if ( 'yes' == self::_get_option( 'filter_gravatars' ) ) {
 				add_filter( 'get_avatar', array( __CLASS__, 'filter' ), 200 );
-			}
+			
 
 			add_filter( 'bj_lazy_load_html', array( __CLASS__, 'filter' ) );
 		}
@@ -180,11 +158,8 @@ class BJLL {
 	 */
 	public static function filter_images( $content ) {
 
-		$placeholder_url = self::_get_option( 'placeholder_url' );
-		$placeholder_url = apply_filters( 'bjll/placeholder_url', $placeholder_url, 'image' );
-		if ( ! strlen( $placeholder_url ) ) {
 			$placeholder_url = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-		}
+		
 
 		$match_content = self::_get_content_haystack( $content );
 
@@ -200,23 +175,14 @@ class BJLL {
 			if ( ! preg_match( "/src=['\"]data:image/is", $imgHTML ) ) {
 				
 				$placeholder_url_used = $placeholder_url;
-				// use low res preview image as placeholder if applicable
-				if ( 'yes' == self::_get_option('preview') ) {
-					if( preg_match( '/class=["\'].*?wp-image-([0-9]*)/is', $imgHTML, $id_matches ) ) {
-						$img_id = intval($id_matches[1]);
-						$tiny_img_data  = wp_get_attachment_image_src( $img_id, 'tiny-lazy' );
-						$tiny_url = $tiny_img_data[0];
-						$placeholder_url_used = $tiny_url;
-					}
-				}
 
 				// replace the src and add the data-src attribute
-				$replaceHTML = preg_replace( '/<img(.*?)src=/is', '<img$1src="' . esc_attr( $placeholder_url_used ) . '" data-lazy-type="image" data-lazy-src=', $imgHTML );
+				$replaceHTML = preg_replace( '/<img(.*?)src=/is', '<img$1src="' . esc_attr( $placeholder_url_used ) . '" data-lazy-type="image" data-src=', $imgHTML );
 				
 				// also replace the srcset (responsive images)
-				$replaceHTML = str_replace( 'srcset', 'data-lazy-srcset', $replaceHTML );
+				$replaceHTML = str_replace( 'srcset', 'data-srcset', $replaceHTML );
 				// replace sizes to avoid w3c errors for missing srcset
-				$replaceHTML = str_replace( 'sizes', 'data-lazy-sizes', $replaceHTML );
+				$replaceHTML = str_replace( 'sizes', 'data-sizes', $replaceHTML );
 				
 				// add the lazy class to the img element
 				if ( preg_match( '/class=["\']/i', $replaceHTML ) ) {
@@ -239,49 +205,6 @@ class BJLL {
 	}
 
 	/**
-	 * Replace iframes with placeholders in the content
-	 *
-	 * @param string $content The HTML to do the filtering on
-	 * @return string The HTML with the iframes replaced
-	 */
-	public static function filter_iframes( $content ) {
-
-		$placeholder_url = self::_get_option( 'placeholder_url' );
-		$placeholder_url = apply_filters( 'bjll/placeholder_url', $placeholder_url, 'image' );
-		if ( ! strlen( $placeholder_url ) ) {
-			$placeholder_url = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-		}
-
-		$match_content = self::_get_content_haystack( $content );
-
-		$matches = array();
-		preg_match_all( '|<iframe\s+.*?</iframe>|si', $match_content, $matches );
-		
-		$search = array();
-		$replace = array();
-		
-		foreach ( $matches[0] as $iframeHTML ) {
-
-			// Don't mess with the Gravity Forms ajax iframe
-			if ( strpos( $iframeHTML, 'gform_ajax_frame' ) ) {
-				continue;
-			}
-
-			$replaceHTML = '<img src="' . esc_attr( $placeholder_url ) . '"  class="lazy lazy-hidden" data-lazy-type="iframe" data-lazy-src="' . esc_attr( $iframeHTML ) . '" alt="">';
-			
-			$replaceHTML .= '<noscript>' . $iframeHTML . '</noscript>';
-			
-			array_push( $search, $iframeHTML );
-			array_push( $replace, $replaceHTML );
-		}
-		
-		$content = str_replace( $search, $replace, $content );
-
-		return $content;
-
-	}
-
-	/**
 	 * Remove elements we don’t want to filter from the HTML string
 	 *
 	 * We’re reducing the haystack by removing the hay we know we don’t want to look for needles in
@@ -291,8 +214,6 @@ class BJLL {
 	 */
 	protected static function _get_content_haystack( $content ) {
 		$content = self::remove_noscript( $content );
-		$content = self::remove_skip_classes_elements( $content );
-
 		return $content;
 	}
 
@@ -305,69 +226,6 @@ class BJLL {
 	 */
 	public static function remove_noscript( $content ) {
 		return preg_replace( '/<noscript.*?(\/noscript>)/i', '', $content );
-	}
-
-	/**
-	 * Remove HTML elements with certain classnames (or IDs) from HTML string
-	 *
-	 * @param string $content The HTML string
-	 * @return string The HTML string without the unwanted elements
-	 */
-	public static function remove_skip_classes_elements( $content ) {
-
-		$skip_classes = self::_get_skip_classes( 'html' );
-
-		/*
-		http://stackoverflow.com/questions/1732348/regex-match-open-tags-except-xhtml-self-contained-tags/1732454#1732454
-		We can’t do this, but we still do it.
-		*/
-		$skip_classes_quoted = array_map( 'preg_quote', $skip_classes );
-		$skip_classes_ORed = implode( '|', $skip_classes_quoted );
-
-		$regex = '/<\s*\w*\s*class\s*=\s*[\'"](|.*\s)' . $skip_classes_ORed . '(|\s.*)[\'"].*>/isU';
-
-		return preg_replace( $regex, '', $content );
-	}
-
-	/**
-	 * Get an option value
-	 *
-	 * @param string $option_key The name of the option
-	 * @return string The option value
-	 */
-	protected static function _get_option( $option_key ) {
-		return self::$_options->get( $option_key );
-	}
-
-	/**
-	 * Get the skip classes
-	 *
-	 * @param string $content_type The content type (image/iframe etc)
-	 * @return array An array of strings with the class names
-	 */
-	protected static function _get_skip_classes( $content_type ) {
-
-		$skip_classes = array();
-
-		$skip_classes_str = self::_get_option( 'skip_classes' );
-		
-		if ( strlen( trim( $skip_classes_str ) ) ) {
-			$skip_classes = array_map( 'trim', explode( ',', $skip_classes_str ) );
-		}
-
-		if ( ! in_array( 'lazy', $skip_classes ) ) {
-			$skip_classes[] = 'lazy';
-		}
-
-		/**
-		 * Filter the class names to skip
-		 *
-		 * @param array $skip_classes The current classes to skip
-		 * @param string $content_type The current content type
-		 */
-		$skip_classes = apply_filters( 'bjll/skip_classes', $skip_classes, $content_type );
-		
-		return $skip_classes;
 	}
 
 }
